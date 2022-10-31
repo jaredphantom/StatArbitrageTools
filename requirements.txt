@@ -1,0 +1,8 @@
+yfinance
+datetime
+seaborn
+pandas
+numpy
+matplotlib
+arch
+discord.py==1.7.3
