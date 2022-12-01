@@ -16,23 +16,37 @@ allCrypto = [
              "ONE", "HIVE", "ICX", "FLUX"
             ]
 
-def getPrices(crypto: list[str], start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1), progress: bool = True) -> Dict[str, np.ndarray]:
+binanceCrypto = [
+                 "BTC", "ETH", "ALGO", "XRP", "ADA", "QNT", "HNT", "SOL", "BCH", "ETC", "EOS", "NEO",
+                 "DOGE", "XTZ", "DOT", "LTC", "MATIC", "LINK", "VET", "HBAR", "MANA", "SAND",
+                 "ANT", "XLM", "TRX", "UNI", "AVAX", "ATOM", "FTT", "NEAR", "XMR", "FIL", "EGLD",
+                 "AAVE", "THETA", "FTM", "RUNE", "ENJ", "LRC", "ANKR", "CELR", "MKR", "ZEC", "DASH", 
+                 "BAT", "1INCH", "CELO", "HOT", "GALA", "YFI", "ONE", "ICX"
+                ]
+
+def getPrices(crypto: list[str], start: dt = dt(2021, 1, 1), end: dt = dt.today(), progress: bool = True) -> Dict[str, np.ndarray]:
     cryptoDict = {}
 
     for coin in crypto:
-        data = yf.download(f'{coin}-USD', start, end, progress=progress)
+        data: pd.DataFrame = yf.download(f'{coin}-USD', start, end, progress=progress)
         closes = data["Close"].to_numpy()
         cryptoDict[coin] = closes
 
     return cryptoDict
 
-def drawCorrGraphs(coins: Dict[str, np.ndarray], start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1)):
+def drawCorrGraphs(coins: Dict[str, np.ndarray], start: dt = dt(2021, 1, 1), end: dt = dt.today(), log: bool = True):
     plt.figure()
     for coin in coins:
-        plt.plot(np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D")), np.log1p(coins[coin]))
+        if log:
+            plt.plot(np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D")), np.log1p(coins[coin]))
+        else:
+            plt.plot(np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D")), coins[coin])
 
     plt.legend(list(coins.keys()), loc=0, fontsize="x-small")
-    plt.ylabel("log(Price)")
+    if log:
+        plt.ylabel("log(1 + Price)")
+    else:
+        plt.ylabel("Price")
     plt.xlabel("Time")
     plt.draw()
 
@@ -42,13 +56,15 @@ def drawCorrGraphs(coins: Dict[str, np.ndarray], start: dt = dt(2021, 1, 1), end
     plt.title("Price Correlation")
     plt.draw()
 
-def getCorrelations(coins: Dict[str, np.ndarray], threshold: float = -1) -> Dict[str, list[tuple[Union[str, float]]]]:
+def getCorrelations(coins: Dict[str, np.ndarray], threshold: float = -1, above: bool = True) -> Dict[str, list[tuple[Union[str, float]]]]:
     correlations = {}
     for baseCoin in coins:
         corrDict = {}
         for otherCoin in coins:
             corr = float(pd.DataFrame({key: coins[key] for key in [baseCoin, otherCoin]}).corr()[otherCoin].to_numpy()[0])
-            if corr >= threshold and otherCoin != baseCoin:
+            if corr >= threshold and otherCoin != baseCoin and above:
+                corrDict[otherCoin] = corr
+            if corr <= threshold and otherCoin != baseCoin and not above:
                 corrDict[otherCoin] = corr
         for corr in corrDict:
             correlations[baseCoin] = correlations.setdefault(baseCoin, []) + [(corr, corrDict[corr])]
@@ -56,7 +72,10 @@ def getCorrelations(coins: Dict[str, np.ndarray], threshold: float = -1) -> Dict
     return correlations
 
 def getPairCorr(coins: Dict[str, np.ndarray]) -> float:
-    return float(pd.DataFrame(coins).corr()[list(coins.keys())[1]].to_numpy()[0])
+    try:
+        return float(pd.DataFrame(coins).corr()[list(coins.keys())[1]].to_numpy()[0])
+    except ValueError:
+        return 0
 
 def printCorrelations(correlations: Dict[str, list[tuple[Union[str, float]]]]):
     for coin in correlations:
@@ -82,7 +101,7 @@ def getCointSummary(coinPrices: list[float], coin2Prices: list[float]) -> tuple[
     return cointStats.stat, cointStats.pvalue
 
 def drawSpreadGraph(coinPrices: list[float], coin2Prices: list[float], coeff: pd.Series, title: str,
-                    start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1)):
+                    start: dt = dt(2021, 1, 1), end: dt = dt.today()):
     new = []
     for c1, c2 in zip(coinPrices, coin2Prices):
         new.append(c1 + (coeff["x1"] * c2))
@@ -106,11 +125,11 @@ def drawSpreadGraph(coinPrices: list[float], coin2Prices: list[float], coeff: pd
     plt.plot(np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D")), stddev_down2, color="pink")
     plt.draw()
 
-def testGoodPairs(pairs: list[tuple[str]], graph: bool, start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1)):
+def testGoodPairs(pairs: list[tuple[str]], graph: bool, start: dt = dt(2021, 1, 1), end: dt = dt.today()):
     for pair in pairs:
         testPair(*pair, graph=graph, start=start, end=end)
 
-def testPair(testCoin1: str, testCoin2: str, graph: bool, start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1)):
+def testPair(testCoin1: str, testCoin2: str, graph: bool, start: dt = dt(2021, 1, 1), end: dt = dt.today()):
     testCrypto = [testCoin1, testCoin2]
     print("-"*50, f"\n\t\t{testCrypto[0]}/{testCrypto[1]}\n" + "-"*50)
     cryptoDict = getPrices(crypto=testCrypto, start=start, end=end, progress=False)
@@ -124,7 +143,7 @@ def testPair(testCoin1: str, testCoin2: str, graph: bool, start: dt = dt(2021, 1
                         title=f"{testCrypto[0]} - {abs(cointCoeff['x1']):.3f} {testCrypto[1]}", start=start, end=end)
         plt.show()
 
-def testAll(crypto: list[str], threshold: float, graph: bool, start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1)):
+def testAll(crypto: list[str], threshold: float, graph: bool, start: dt = dt(2021, 1, 1), end: dt = dt.today()):
     cryptoDict = getPrices(crypto=crypto, start=start, end=end)
     printCorrelations(correlations=getCorrelations(coins=cryptoDict, threshold=threshold))
 
@@ -132,7 +151,7 @@ def testAll(crypto: list[str], threshold: float, graph: bool, start: dt = dt(202
         drawCorrGraphs(coins=cryptoDict, start=start, end=end)
         plt.show()
 
-def generateBestPairs(crypto: list[str], threshold: float, start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1)) -> list[tuple[str]]:
+def generateBestPairs(crypto: list[str], threshold: float, start: dt = dt(2021, 1, 1), end: dt = dt.today()) -> list[tuple[str]]:
     cryptoDict = getPrices(crypto=crypto, start=start, end=end)
     bestPairs = []
     for c1 in cryptoDict:
