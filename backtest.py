@@ -11,7 +11,7 @@ class Positions(Enum):
     SHORT = -1
 
 class Trader:
-    def __init__(self, equity: float) -> None:
+    def __init__(self, equity: float, leverage: int = 1) -> None:
         self._equity = equity
         self._equityCurve = []
         self._position = False
@@ -19,6 +19,8 @@ class Trader:
         self._openPrice = 0
         self._trades = 0
         self._pnlArray = []
+        self._leverage = leverage if leverage >= 1 else 1
+        self._decay = 0.9997
 
     def openPosition(self, position: Positions, price: float):
         if not self._position:
@@ -38,8 +40,9 @@ class Trader:
     
     def plotPriceChange(self, price: float) -> float:
         if self._position:
-            priceChange = 1 + (self._positionType.value * ((price - self._openPrice) / self._openPrice))
-            if self._positionType == Positions.SHORT and priceChange <= 0:
+            self._equity *= self._decay
+            priceChange = 1 + (self._positionType.value * ((price - self._openPrice) / self._openPrice) * self._leverage)
+            if priceChange <= 0 and (self._positionType == Positions.SHORT or (self._positionType == Positions.LONG and self._leverage > 1)):
                 self._equity = 0
             self._equityCurve.append(self._equity * priceChange)
             return priceChange
@@ -78,9 +81,9 @@ def rebalance(totalEquity: float, baseEquity: float, quoteEquity: float) -> tupl
     return equityMultiplier * baseEquity, equityMultiplier * quoteEquity
 
 def backtest(coins: Dict[str, np.ndarray], coeff: pd.Series, baseEquity: float, quoteEquity: float, constant: float = 1.5, graph: bool = True,
-             start: dt = dt(2021, 1, 1), end: dt = dt(dt.today().year, dt.today().month, dt.today().day - 1 if dt.today().day > 1 else 1)):
-    baseTrader = Trader(baseEquity)
-    quoteTrader = Trader(quoteEquity)
+             leverage: int = 1, start: dt = dt(2021, 1, 1), end: dt = dt.today()) -> list[float]:
+    baseTrader = Trader(equity=baseEquity, leverage=leverage)
+    quoteTrader = Trader(equity=quoteEquity, leverage=leverage)
     OverallPosition = None
 
     spreadGraph = []
@@ -89,7 +92,7 @@ def backtest(coins: Dict[str, np.ndarray], coeff: pd.Series, baseEquity: float, 
 
     mean = np.mean(spreadGraph)
     stddev = np.std(spreadGraph)
-    stdCoeff = constant
+    stdCoeff = constant if constant >= 1 else 1
 
     for c1, c2, s in zip(coins[list(coins.keys())[0]], coins[list(coins.keys())[1]], spreadGraph):
 
@@ -138,11 +141,12 @@ def backtest(coins: Dict[str, np.ndarray], coeff: pd.Series, baseEquity: float, 
     print(f"Open position: {baseTrader.checkPosition()} " 
           f"{'(' + ('+' if currentPnlPercent > 0 else '') + str(currentPnlPercent) + '%)' if baseTrader.checkPosition() else ''}")
 
+    totalCurve = []
+    for c1, c2 in zip(baseTrader.getEquityCurve(), quoteTrader.getEquityCurve()):
+        totalCurve.append(c1 + c2)
+
     if graph:
-        totalCurve = []
         plt.figure()
-        for c1, c2 in zip(baseTrader.getEquityCurve(), quoteTrader.getEquityCurve()):
-            totalCurve.append(c1 + c2)
         plt.plot(np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D")), totalCurve)
         plt.plot(np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D")), baseTrader.getEquityCurve())
         plt.plot(np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D")), quoteTrader.getEquityCurve())
@@ -152,13 +156,14 @@ def backtest(coins: Dict[str, np.ndarray], coeff: pd.Series, baseEquity: float, 
         plt.ylabel("Equity ($)")
         plt.show()
 
-def runBacktestAll(threshold: float, constant: float, graph: bool):
-    for pair in generateBestPairs(crypto=allCrypto, threshold=threshold):
-        cryptoDict = getPrices(crypto=pair, progress=False)
+    return totalCurve
+
+def runBacktestAll(threshold: float, constant: float, graph: bool, leverage: int, start: dt = dt(2021, 1, 1), end: dt = dt.today()):
+    for pair in generateBestPairs(crypto=allCrypto, threshold=threshold, start=start, end=end):
+        cryptoDict = getPrices(crypto=pair, progress=False, start=start, end=end)
         cointCoeff = getCointCoeff(coinPrices=cryptoDict[list(cryptoDict.keys())[0]], coin2Prices=cryptoDict[list(cryptoDict.keys())[1]], verbose=False)
         base, quote = returnEntry(coins=cryptoDict, coeff=cointCoeff)
-        backtest(coins=cryptoDict, coeff=cointCoeff, baseEquity=base, quoteEquity=quote, constant=constant, graph=graph)
+        backtest(coins=cryptoDict, coeff=cointCoeff, baseEquity=base, quoteEquity=quote, constant=constant, graph=graph, leverage=leverage, start=start, end=end)
 
 if __name__ == "__main__":
-    runBacktestAll(threshold=0.8, constant=1.5, graph=False)
-
+    runBacktestAll(threshold=0.8, constant=1.5, graph=False, leverage=1)
