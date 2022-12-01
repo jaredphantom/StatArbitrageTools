@@ -76,5 +76,5 @@ def runPortfolioBacktest(coins: list[str], threshold: float, constant: float, le
     backtestPortfolio(coins=portfolio, constant=constant, leverage=leverage, start=start, end=end)
 
 if __name__ == "__main__":
-    #runPortfolioBacktest(coins=binanceCrypto, threshold=0.9, constant=1.5, leverage=2, size=25, start=dt(2021, 11, 1))
+    runPortfolioBacktest(coins=binanceCrypto, threshold=0.9, constant=1.5, leverage=2, size=25, start=dt(2021, 11, 1))
     testGoodPairs(pairs=generatePortfolio(corr=generateCorrMatrix(coins=binanceCrypto, threshold=0.9, start=dt(2021, 11, 1)), size=25), graph=False, start=dt(2021, 11, 1))
