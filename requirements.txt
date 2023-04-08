@@ -6,3 +6,5 @@ numpy
 matplotlib
 arch
 discord.py==1.7.3
+dydx-v3-python
+python-dotenv
