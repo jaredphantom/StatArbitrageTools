@@ -1,4 +1,4 @@
-from statarb import generateBestPairs, getCointCoeff, getPrices, testGoodPairs, binanceCrypto, dydxCrypto
+from statarb import generateBestPairs, getCointCoeff, getPrices, dydxCrypto
 from backtest import backtest
 import pandas as pd
 import numpy as np
@@ -6,6 +6,9 @@ import seaborn as sb
 import matplotlib.pyplot as plt
 from datetime import datetime as dt
 from math import comb, ceil, floor
+
+TRADING_DAYS_IN_YEAR = 252
+RISK_FREE_RATE = 4.8 / TRADING_DAYS_IN_YEAR
 
 def generateCorrMatrix(coins: list[str], threshold: float, start: dt = dt(2021, 1, 1), end: dt = None) -> pd.DataFrame:
     if end is None:
@@ -48,9 +51,9 @@ def generatePortfolio(corr: pd.DataFrame, size: int) -> list[tuple[str]]:
         pairs.append(tuple(pair.split("/")))
 
     print(f"\nMean pairwise correlation (optimal portfolio): {(corr.sum().sum() / (len(corr.index) ** 2 - len(corr.index))):.4f}")
-    print(f"Mean pairwise correlation ({numSamples} random samples): {min(sampleCorrs):.4f}, {np.mean(sampleCorrs):.4f}")
+    print(f"Mean pairwise correlation ({numSamples} random samples): {min(sampleCorrs):.4f} (min), {np.mean(sampleCorrs):.4f} (avg), {max(sampleCorrs):.4f} (max)")
     print("\nOptimal Portfolio: ", end="")
-    print(*pairs, sep=", ")
+    print(*list(map("/".join, pairs)), sep=", ")
     return pairs
 
 def backtestPortfolio(coins: list[tuple[str]], constant: float, leverage: int, start: dt = dt(2021, 1, 1), end: dt = None):
@@ -71,11 +74,6 @@ def backtestPortfolio(coins: list[tuple[str]], constant: float, leverage: int, s
         for curve in curves[1:]:
             equity += curve[i]
         totalCurve.append(equity)
-
-    print("-"*50, f"\nPortfolio Backtest: {len(curves)} pairs ({leverage if leverage >= 1 else 1}x leverage)\n" + "-"*50)
-    print(f"Return ({len(totalCurve)} days): {(((totalCurve[-1] - totalCurve[0]) / totalCurve[0]) * 100):.3f}%")
-    print(f"${totalCurve[0]:.2f}  ->  ${totalCurve[-1]:.2f}")
-    print(f"Sharpe ratio: {calculateSharpe(totalCurve):.3f}")
 
     plt.figure()
     intervals = np.arange(np.datetime64(start), np.datetime64(end), np.timedelta64(1, "D"))
@@ -98,7 +96,7 @@ def backtestPortfolio(coins: list[tuple[str]], constant: float, leverage: int, s
     plt.ylabel("Equity ($)")
 
     sb.displot(returns, color="green" if np.mean(returns) > 0 else "red", kde=True, rug=True, height=6, aspect=1)
-    plt.title(f"Trade Returns Distribution\nμ = {np.mean(returns):.2f}, σ = {np.std(returns):.2f}")
+    plt.title(f"Trade Returns Distribution\nμ = {np.mean(returns):.2f}%, σ = {np.std(returns):.2f}%")
     plt.xlabel("Trade Returns (%)")
     plt.ylabel("Number of trades")
     plt.xticks(np.linspace(floor(min(returns)), ceil(max(returns)), 10))
@@ -109,6 +107,11 @@ def backtestPortfolio(coins: list[tuple[str]], constant: float, leverage: int, s
         dailyReturns.append(((totalCurve[i+1] - totalCurve[i]) / totalCurve[i]) * 100)
     dailyBtc = dailyBtc[-len(dailyReturns):]
 
+    portfolio_std = np.std(dailyReturns)
+    portfolio_mean = np.mean(dailyReturns)
+    benchmark_std = np.std(dailyBtc)
+    benchmark_mean = np.mean(dailyBtc)
+
     returnsDict = {
         "Portfolio": dailyReturns,
         "BTC": dailyBtc
@@ -116,9 +119,9 @@ def backtestPortfolio(coins: list[tuple[str]], constant: float, leverage: int, s
     returns_df = pd.DataFrame(returnsDict)
 
     sb.displot(returns_df, legend=True, kde=True, height=6, aspect=1)
-    plt.title(f"Daily Returns Distribution - α = {(np.mean(dailyReturns) - np.mean(dailyBtc)):.2f}, β = {(np.std(dailyReturns) / np.std(dailyBtc)):.2f}" +
-              f"\n$μ^P$ = {np.mean(dailyReturns):.2f}, $σ^P$ = {np.std(dailyReturns):.2f}" +
-              f"\n$μ^B$ = {np.mean(dailyBtc):.2f}, $σ^B$ = {np.std(dailyBtc):.2f}")
+    plt.title(f"Daily Returns Distribution" +
+              f"\n$μ^P$ = {portfolio_mean:.2f}%, $σ^P$ = {portfolio_std:.2f}%" +
+              f"\n$μ^B$ = {benchmark_mean:.2f}%, $σ^B$ = {benchmark_std:.2f}%")
     plt.xlabel("Daily Returns (%)")
     plt.ylabel("Number of days")
     plt.xticks(np.linspace(floor(min(min(dailyReturns), min(dailyBtc))),
@@ -126,18 +129,37 @@ def backtestPortfolio(coins: list[tuple[str]], constant: float, leverage: int, s
                            10))
     plt.tight_layout()
 
+    print()
+    print("-"*50, f"\nPortfolio Backtest: {len(curves)} pairs ({leverage if leverage >= 1 else 1}x leverage)\n" + "-"*50)
+    print(f"Return ({len(totalCurve)} days): {(((totalCurve[-1] - totalCurve[0]) / totalCurve[0]) * 100):.3f}%")
+    print(f"Strategy: ${totalCurve[0]:.2f}  ->  ${totalCurve[-1]:.2f}")
+    print(f"BTC Hold: ${buynhold[0]:.2f}  ->  ${buynhold[-1]:.2f}")
+    if portfolio_std == 0:
+        sharpe = np.nan
+    else:
+        sharpe = ((portfolio_mean - RISK_FREE_RATE) / portfolio_std) * (TRADING_DAYS_IN_YEAR ** 0.5)
+    print(f"Sharpe Ratio: {sharpe:.3f}")
+    var = (portfolio_mean - 2.33 * portfolio_std) * -1
+    print(f"Daily VaR: {var:.3f}%")
+    print(f"Max Drawdown: {getMaxDrawdown(totalCurve):.2f}%")
+    beta = returns_df.corr()['BTC'].to_numpy()[0] * (portfolio_std / benchmark_std)
+    alpha = (portfolio_mean - RISK_FREE_RATE - (beta * (benchmark_mean - RISK_FREE_RATE))) * TRADING_DAYS_IN_YEAR
+    print(f"α = {alpha:.3f}%, β = {beta:.5f}")
+
     plt.show()
 
-def calculateSharpe(equity: list[float]) -> float:
-    returns = []
-    for e1, e2 in zip(equity, equity[1:]):
-        returns.append(((e2 - e1) / e1) * 100)
+def getMaxDrawdown(equityCurve: list[float]) -> float:
+    mdd = 0
+    peak = -99999
+
+    for equity in equityCurve:
+        if equity > peak:
+            peak = equity
+        dd = 100 * (peak - equity) / peak
+        if dd > mdd:
+            mdd = dd
     
-    std = np.std(returns)
-    if std == 0:
-        return np.nan
-    mean = np.mean(returns)
-    return ((mean - 0.013) / std) * (365 ** 0.5)
+    return mdd
 
 def runPortfolioBacktest(coins: list[str], threshold: float, constant: float, leverage: int, size: int, start: dt = dt(2021, 1, 1), end: dt = None):
     if end is None:
@@ -148,4 +170,4 @@ def runPortfolioBacktest(coins: list[str], threshold: float, constant: float, le
     backtestPortfolio(coins=portfolio, constant=constant, leverage=leverage, start=start, end=end)
 
 if __name__ == "__main__":
-    runPortfolioBacktest(coins=dydxCrypto, threshold=0.75, constant=1, leverage=1, size=25, start=dt(2022, 1, 1))
+    runPortfolioBacktest(coins=dydxCrypto, threshold=0.75, constant=1, leverage=2, size=10, start=dt(2022, 1, 1))
